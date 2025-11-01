@@ -1,110 +1,153 @@
-import gradio as gr
+import streamlit as st
 from encode import encode_process
 from decode import decode_process
+import tempfile
 import os
+import time
 
-def handle_encode(video, message, encryption_style, key, public_key_file, frame_storage_image):
-    if not video or not message:
-        return None, "Video and message are required.", None
+st.set_page_config(page_title="Video Steganography", layout="wide")
+st.title("🎥 Video Steganography")
 
-    video_path = video.name
-    key_path = public_key_file.name if public_key_file else None
-    frame_image_path = frame_storage_image.name if frame_storage_image else None
+tab1, tab2 = st.tabs(["Encode", "Decode"])
 
-    try:
-        result = encode_process(
-            video_path=video_path,
-            message=message,
-            encryption_style=encryption_style,
-            key=key,
-            key_path=key_path,
-            frame_storage_image=frame_image_path
-        )
+# ============================ ENCODE TAB ============================
+with tab1:
+    st.subheader("🔒 Encode Message into Video")
 
-        output_video = result.get('video')
-        output_image = result.get('image')
-        encrypted_key = result.get('encrypted_aes_key', "No key generated.")
+    video_file = st.file_uploader("Upload Video", type=["mp4", "avi", "mkv"])
+    message = st.text_area("Message to Hide")
+    encryption_style = st.radio("Encryption Style", ["AES", "RSA"])
 
-        return output_video, f"AES Key (Encrypted with RSA): {encrypted_key}", output_image
+    col1, col2 = st.columns(2)
+    with col1:
+        aes_key = st.text_input("AES Key (for AES encryption)", type="password")
+    with col2:
+        rsa_public_key = st.file_uploader("RSA Public Key (for RSA or AES key encryption)", type=["pem"])
 
-    except Exception as e:
-        return None, str(e), None
+    frame_storage_image = st.file_uploader("Optional: Image to Hide Frame Numbers", type=["png", "jpg", "jpeg"])
 
-def handle_decode(encoded_video, decryption_style, encoded_image, frames_input, key, private_key_file):
-    if not encoded_video:
-        return "Encoded video is required."
+    if st.button("🚀 Encode Video"):
+        if not video_file or not message:
+            st.error("⚠️ Video and message are required.")
+        else:
+            try:
+                with st.spinner("🔄 Preparing files..."):
+                    with tempfile.NamedTemporaryFile(delete=False) as tmp_video:
+                        tmp_video.write(video_file.read())
+                        video_path = tmp_video.name
 
-    video_path = encoded_video.name
-    image_path = encoded_image.name if encoded_image else None
-    rsa_key_path = private_key_file.name if private_key_file else None
+                    key_path = None
+                    if rsa_public_key:
+                        with tempfile.NamedTemporaryFile(delete=False) as tmp_key:
+                            tmp_key.write(rsa_public_key.read())
+                            key_path = tmp_key.name
 
-    try:
-        decrypted_message = decode_process(
-            encoded_video_path=video_path,
-            decryption_style=decryption_style,
-            encoded_image_path=image_path,
-            frames_input=frames_input,
-            key=key,
-            rsa_key_path=rsa_key_path
-        )
-        return decrypted_message
-    except Exception as e:
-        return f"Error during decoding: {str(e)}"
+                    frame_image_path = None
+                    if frame_storage_image:
+                        with tempfile.NamedTemporaryFile(delete=False) as tmp_img:
+                            tmp_img.write(frame_storage_image.read())
+                            frame_image_path = tmp_img.name
 
-with gr.Blocks() as demo:
-    gr.Markdown("# Video Steganography")
+                progress_bar = st.progress(0)
+                for i in range(0, 100, 10):
+                    time.sleep(0.05)  # simulate progress
+                    progress_bar.progress(i)
 
-    with gr.Tab("Encode"):
-        video_input = gr.File(label="Upload Video")
-        message_input = gr.Textbox(label="Message to Hide")
-        encryption_style_input = gr.Radio(["AES", "RSA"], label="Encryption Style")
+                st.spinner("🔐 Encoding in progress...")
+                result = encode_process(
+                    video_path=video_path,
+                    message=message,
+                    encryption_style=encryption_style,
+                    key=aes_key,
+                    key_path=key_path,
+                    frame_storage_image=frame_image_path
+                )
+                progress_bar.progress(100)
 
-        with gr.Row():
-            aes_key_input = gr.Textbox(label="AES Key (for AES encryption)", type="password")
-            rsa_public_key_input = gr.File(label="RSA Public Key (for RSA or to encrypt AES key)")
+                output_video = result.get('video')
+                output_image = result.get('image')
+                encrypted_key = result.get('encrypted_aes_key', "No key generated.")
 
-        frame_storage_input = gr.File(label="Optional: Image to Hide Frame Numbers")
+                if output_video and os.path.exists(output_video):
+                    st.success("✅ Video encoded successfully!")
+                    with open(output_video, "rb") as f:
+                        st.download_button("⬇️ Download Encoded Video", f, file_name="encoded_video.mp4")
+                else:
+                    st.warning("⚠️ Encoded video not found in result.")
 
-        encode_button = gr.Button("Encode Video")
+                st.text_area("🔐 AES Key (Encrypted with RSA)", encrypted_key)
 
-        encoded_video_output = gr.File(label="Encoded Video")
-        status_output = gr.Textbox(label="Status & Encrypted AES Key")
-        encoded_image_output = gr.Image(label="Image with Hidden Frame Numbers", type="filepath")
+                if output_image and os.path.exists(output_image):
+                    st.image(output_image, caption="Image with Hidden Frame Numbers")
 
-        encode_button.click(
-            fn=handle_encode,
-            inputs=[video_input, message_input, encryption_style_input, aes_key_input, rsa_public_key_input, frame_storage_input],
-            outputs=[encoded_video_output, status_output, encoded_image_output]
-        )
+            except Exception as e:
+                st.error(f"❌ Error during encoding: {str(e)}")
 
-    with gr.Tab("Decode"):
-        encoded_video_input_decode = gr.File(label="Upload Encoded Video")
-        decryption_style_input_decode = gr.Radio(["AES", "RSA"], label="Decryption Style")
 
-        with gr.Row():
-            aes_key_input_decode = gr.Textbox(label="AES Key (for AES decryption)", type="password")
-            rsa_private_key_input_decode = gr.File(label="RSA Private Key (for RSA decryption)")
+# ============================ DECODE TAB ============================
+with tab2:
+    st.subheader("🔓 Decode Message from Video")
 
-        with gr.Tab("Frame Numbers from Image"):
-            encoded_image_input_decode = gr.File(label="Image with Hidden Frame Numbers")
-        with gr.Tab("Manual Frame Numbers"):
-            frames_manual_input = gr.Textbox(label="Comma-separated frame numbers (e.g., 10,20,30)")
+    encoded_video = st.file_uploader("Upload Encoded Video", type=["mp4", "avi", "mkv"])
+    decryption_style = st.radio("Decryption Style", ["AES", "RSA"])
 
-        decode_button = gr.Button("Decode Video")
-        decoded_message_output = gr.Textbox(label="Decoded Message")
+    col3, col4 = st.columns(2)
+    with col3:
+        aes_key_dec = st.text_input("AES Key (for AES decryption)", type="password")
+    with col4:
+        rsa_private_key = st.file_uploader("RSA Private Key (for RSA decryption)", type=["pem"])
 
-        decode_button.click(
-            fn=handle_decode,
-            inputs=[
-                encoded_video_input_decode,
-                decryption_style_input_decode,
-                encoded_image_input_decode,
-                frames_manual_input,
-                aes_key_input_decode,
-                rsa_private_key_input_decode
-            ],
-            outputs=decoded_message_output
-        )
+    st.markdown("### Optional: Provide Frame Information")
+    frame_option = st.radio("Choose frame input method", ["From Image", "Manual Entry"])
 
-if __name__ == "__main__":
-    demo.launch(share=True)
+    encoded_image = None
+    frames_manual = None
+
+    if frame_option == "From Image":
+        encoded_image = st.file_uploader("Image with Hidden Frame Numbers", type=["png", "jpg", "jpeg"])
+    else:
+        frames_manual = st.text_input("Comma-separated frame numbers (e.g., 10,20,30)")
+
+    if st.button("🧩 Decode Video"):
+        if not encoded_video:
+            st.error("⚠️ Encoded video is required.")
+        else:
+            try:
+                with st.spinner("🔄 Preparing files..."):
+                    with tempfile.NamedTemporaryFile(delete=False) as tmp_vid:
+                        tmp_vid.write(encoded_video.read())
+                        video_path = tmp_vid.name
+
+                    rsa_key_path = None
+                    if rsa_private_key:
+                        with tempfile.NamedTemporaryFile(delete=False) as tmp_key:
+                            tmp_key.write(rsa_private_key.read())
+                            rsa_key_path = tmp_key.name
+
+                    image_path = None
+                    if encoded_image:
+                        with tempfile.NamedTemporaryFile(delete=False) as tmp_img:
+                            tmp_img.write(encoded_image.read())
+                            image_path = tmp_img.name
+
+                progress_bar = st.progress(0)
+                for i in range(0, 100, 10):
+                    time.sleep(0.05)  # simulate progress
+                    progress_bar.progress(i)
+
+                st.spinner("🔓 Decoding in progress...")
+                decrypted_message = decode_process(
+                    encoded_video_path=video_path,
+                    decryption_style=decryption_style,
+                    encoded_image_path=image_path,
+                    frames_input=frames_manual,
+                    key=aes_key_dec,
+                    rsa_key_path=rsa_key_path
+                )
+                progress_bar.progress(100)
+
+                st.success("✅ Message Decoded Successfully!")
+                st.text_area("💬 Decoded Message", decrypted_message)
+
+            except Exception as e:
+                st.error(f"❌ Error during decoding: {str(e)}")
